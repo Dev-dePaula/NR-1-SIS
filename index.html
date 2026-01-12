@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PGR Digital Pro | NR1 Compliance</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root { --p: #1e40af; --s: #10b981; --d: #ef4444; --w: #f59e0b; --bg: #f8fafc; --side: #1e293b; }
+        body { font-family: 'Inter', sans-serif; margin: 0; background: var(--bg); display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Sidebar */
+        .sidebar { width: 260px; background: var(--side); color: white; padding: 20px; display: flex; flex-direction: column; }
+        .nav-link { color: #94a3b8; text-decoration: none; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; cursor: pointer; border: none; background: none; width: 100%; font-size: 1rem; }
+        .nav-link:hover, .nav-link.active { background: rgba(255,255,255,0.1); color: white; }
+        .nav-link.active { border-left: 4px solid var(--s); }
+
+        /* Main Content */
+        .main { flex: 1; padding: 25px; overflow-y: auto; }
+        .view { display: none; }
+        .view.active { display: block; }
+
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h2 { margin-top: 0; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+
+        /* Form Grid */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; }
+        .full { grid-column: 1 / -1; }
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 0.85rem; font-weight: 600; color: #64748b; }
+        input, select, textarea { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.9rem; }
+        
+        /* Tabela */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th { text-align: left; padding: 12px; background: #f1f5f9; color: #475569; font-size: 0.8rem; text-transform: uppercase; }
+        td { padding: 12px; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; }
+
+        .btn { padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; border: none; transition: 0.2s; }
+        .btn-p { background: var(--p); color: white; }
+        .btn-s { background: var(--s); color: white; }
+        
+        /* Status Badges */
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold; }
+        .bg-critico { background: #fee2e2; color: #991b1b; }
+        .bg-medio { background: #fef3c7; color: #92400e; }
+        .bg-baixo { background: #dcfce7; color: #166534; }
+
+        /* Laudo Print Style */
+        #view-laudo-print { background: white; padding: 50px; color: black; line-height: 1.6; }
+        .laudo-header { text-align: center; border-bottom: 2px solid black; margin-bottom: 30px; }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; }
+            .main { padding: 0; overflow: visible; }
+            .view { display: none !important; }
+            #view-laudo-print.active { display: block !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <nav class="sidebar no-print">
+        <h2 style="color:white; font-size: 1.4rem;"><i class="fas fa-microchip"></i> PGR System</h2>
+        <div style="margin-top: 30px;">
+            <button class="nav-link active" onclick="showView('dashboard')"><i class="fas fa-chart-line"></i> Dashboard</button>
+            <button class="nav-link" onclick="showView('empresa')"><i class="fas fa-building"></i> Dados da Empresa</button>
+            <button class="nav-link" onclick="showView('inventario')"><i class="fas fa-clipboard-list"></i> Inventário GRO</button>
+            <button class="nav-link" onclick="showView('plano')"><i class="fas fa-tasks"></i> Plano de Ação</button>
+            <button class="nav-link" onclick="generateLaudo()"><i class="fas fa-file-pdf"></i> Gerar Laudo Final</button>
+        </div>
+    </nav>
+
+    <main class="main">
+        
+        <div id="view-dashboard" class="view active">
+            <h2>Visão Geral do Programa</h2>
+            <div class="grid">
+                <div class="card"><h4>Riscos Ativos</h4><p id="dash-total" style="font-size:2rem; font-weight:bold;">0</p></div>
+                <div class="card" style="border-left: 5px solid var(--d);"><h4>Críticos</h4><p id="dash-critico" style="font-size:2rem; font-weight:bold;">0</p></div>
+            </div>
+            <div class="card">
+                <canvas id="mainChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+
+        <div id="view-empresa" class="view">
+            <div class="card">
+                <h2>Identificação da Organização</h2>
+                <div class="grid">
+                    <div class="form-group">
+                        <label>CNPJ (Apenas números)</label>
+                        <input type="text" id="emp-cnpj" placeholder="00.000.000/0000-00" onblur="checkCNPJ(this.value)">
+                    </div>
+                    <div class="form-group full">
+                        <label>Razão Social</label>
+                        <input type="text" id="emp-razao" readonly style="background: #f1f5f9;">
+                    </div>
+                    <div class="form-group">
+                        <label>Nome Fantasia</label>
+                        <input type="text" id="emp-fantasia">
+                    </div>
+                    <div class="form-group">
+                        <label>CNAE / Grau de Risco</label>
+                        <input type="text" id="emp-cnae">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-inventario" class="view">
+            <div class="card">
+                <h2>Novo Risco Identificado</h2>
+                <div class="grid">
+                    <div class="form-group"><label>Setor</label><input type="text" id="r-setor"></div>
+                    <div class="form-group"><label>Perigo</label><input type="text" id="r-perigo"></div>
+                    <div class="form-group"><label>Fonte Geradora</label><input type="text" id="r-fonte"></div>
+                    <div class="form-group">
+                        <label>Probabilidade</label>
+                        <select id="r-prob"><option value="1">1-Rara</option><option value="3">3-Média</option><option value="5">5-Alta</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Severidade</label>
+                        <select id="r-sev"><option value="1">1-Leve</option><option value="3">3-Séria</option><option value="5">5-Fatal</option></select>
+                    </div>
+                    <div class="form-group full"><label>Medida de Controle Recomenda</label><textarea id="r-acao"></textarea></div>
+                </div>
+                <button class="btn btn-s" onclick="saveRisk()">Salvar no Inventário</button>
+            </div>
+            
+            <div class="card">
+                <table id="table-inv">
+                    <thead><tr><th>Setor</th><th>Perigo</th><th>Matriz</th><th>Nível</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="view-plano" class="view">
+            <div class="card">
+                <h2>Cronograma de Medidas de Prevenção</h2>
+                <table id="table-plano">
+                    <thead><tr><th>Medida</th><th>Setor</th><th>Responsável</th><th>Prazo</th><th>Status</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="view-laudo-print" class="view">
+            <div class="laudo-header">
+                <h1>PROGRAMA DE GERENCIAMENTO DE RISCOS - PGR</h1>
+                <p>Conforme Norma Regulamentadora NR-01</p>
+            </div>
+            <div id="laudo-content">
+                </div>
+            <button class="btn btn-p no-print" onclick="window.print()">Confirmar Impressão</button>
+        </div>
+
+    </main>
+
+<script>
+    let db = { empresa: {}, riscos: [] };
+    let chart;
+
+    // 1. NAVEGAÇÃO DE TELAS
+    function showView(viewId) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        document.getElementById('view-' + viewId).classList.add('active');
+        event.currentTarget.classList.add('active');
+    }
+
+    // 2. BUSCA CNPJ AUTOMÁTICA
+    async function checkCNPJ(cnpj) {
+        cnpj = cnpj.replace(/\D/g, '');
+        if(cnpj.length !== 14) return;
+        
+        try {
+            const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
+            const data = await res.json();
+            
+            if(data.razao_social) {
+                document.getElementById('emp-razao').value = data.razao_social;
+                document.getElementById('emp-fantasia').value = data.nome_fantasia || 'N/A';
+                document.getElementById('emp-cnae').value = data.cnae_fiscal_descricao;
+                db.empresa = data;
+            }
+        } catch (e) { alert("Erro ao buscar CNPJ"); }
+    }
+
+    // 3. SALVAR RISCO
+    function saveRisk() {
+        const risk = {
+            setor: document.getElementById('r-setor').value,
+            perigo: document.getElementById('r-perigo').value,
+            fonte: document.getElementById('r-fonte').value,
+            prob: parseInt(document.getElementById('r-prob').value),
+            sev: parseInt(document.getElementById('r-sev').value),
+            acao: document.getElementById('r-acao').value,
+            status: 'Pendente'
+        };
+
+        const score = risk.prob * risk.sev;
+        risk.score = score;
+        risk.nivel = score >= 15 ? 'CRÍTICO' : (score >= 9 ? 'MÉDIO' : 'BAIXO');
+        risk.badge = score >= 15 ? 'bg-critico' : (score >= 9 ? 'bg-medio' : 'bg-baixo');
+
+        db.riscos.push(risk);
+        updateUI();
+    }
+
+    // 4. ATUALIZAR INTERFACE E GRÁFICOS
+    function updateUI() {
+        const tableInv = document.querySelector('#table-inv tbody');
+        const tablePlano = document.querySelector('#table-plano tbody');
+        tableInv.innerHTML = ''; tablePlano.innerHTML = '';
+        
+        let counts = [0, 0, 0];
+
+        db.riscos.forEach(r => {
+            if(r.nivel === 'BAIXO') counts[0]++;
+            if(r.nivel === 'MÉDIO') counts[1]++;
+            if(r.nivel === 'CRÍTICO') counts[2]++;
+
+            tableInv.innerHTML += `<tr><td>${r.setor}</td><td>${r.perigo}</td><td>${r.score}</td><td><span class="badge ${r.badge}">${r.nivel}</span></td></tr>`;
+            tablePlano.innerHTML += `<tr><td>${r.acao}</td><td>${r.setor}</td><td><input type="text" placeholder="Nome"></td><td><input type="date"></td><td><select><option>Pendente</option><option>Concluído</option></select></td></tr>`;
+        });
+
+        document.getElementById('dash-total').innerText = db.riscos.length;
+        document.getElementById('dash-critico').innerText = counts[2];
+
+        chart.data.datasets[0].data = counts;
+        chart.update();
+    }
+
+    // 5. GERAR LAUDO ESTRUTURADO
+    function generateLaudo() {
+        showView('laudo-print');
+        const content = document.getElementById('laudo-content');
+        content.innerHTML = `
+            <h3>1. Identificação da Empresa</h3>
+            <p><b>Razão Social:</b> ${document.getElementById('emp-razao').value}</p>
+            <p><b>CNPJ:</b> ${document.getElementById('emp-cnpj').value}</p>
+            <p><b>Atividade:</b> ${document.getElementById('emp-cnae').value}</p>
+            
+            <h3>2. Inventário de Riscos Ocupacionais (GRO)</h3>
+            <table border="1" style="width:100%; border-collapse:collapse;">
+                <thead><tr><th>Setor</th><th>Perigo</th><th>Risco</th><th>Nível</th></tr></thead>
+                <tbody>
+                    ${db.riscos.map(r => `<tr><td>${r.setor}</td><td>${r.perigo}</td><td>${r.fonte}</td><td>${r.nivel}</td></tr>`).join('')}
+                </tbody>
+            </table>
+
+            <h3>3. Plano de Ação</h3>
+            <table border="1" style="width:100%; border-collapse:collapse; margin-top:10px;">
+                <thead><tr><th>Medida Proposta</th><th>Setor</th><th>Responsável</th></tr></thead>
+                <tbody>
+                    ${db.riscos.map(r => `<tr><td>${r.acao}</td><td>${r.setor}</td><td>__________</td></tr>`).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+
+    window.onload = () => {
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: ['Baixo', 'Médio', 'Crítico'], datasets: [{ label: 'Riscos', data: [0,0,0], backgroundColor: ['#10b981', '#f59e0b', '#ef4444'] }] }
+        });
+    };
+</script>
+</body>
+</html>
