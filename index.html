@@ -57,6 +57,10 @@
             .view { display: none !important; }
             #view-laudo-print.active { display: block !important; }
         }
+    
+        .btn-danger { background: var(--d); color: white; }
+        .btn-xs { padding: 8px 12px; border-radius: 8px; font-size: 0.9rem; }
+
     </style>
 </head>
 <body>
@@ -64,11 +68,11 @@
     <nav class="sidebar no-print">
         <h2 style="color:white; font-size: 1.4rem;"><i class="fas fa-microchip"></i> PGR System</h2>
         <div style="margin-top: 30px;">
-            <button class="nav-link active" onclick="showView('dashboard')"><i class="fas fa-chart-line"></i> Dashboard</button>
-            <button class="nav-link" onclick="showView('empresa')"><i class="fas fa-building"></i> Dados da Empresa</button>
-            <button class="nav-link" onclick="showView('inventario')"><i class="fas fa-clipboard-list"></i> Inventário GRO</button>
-            <button class="nav-link" onclick="showView('plano')"><i class="fas fa-tasks"></i> Plano de Ação</button>
-            <button class="nav-link" onclick="generateLaudo()"><i class="fas fa-file-pdf"></i> Gerar Laudo Final</button>
+            <button class="nav-link active" onclick="showView('dashboard', this)"><i class="fas fa-chart-line"></i> Dashboard</button>
+            <button class="nav-link" onclick="showView('empresa', this)"><i class="fas fa-building"></i> Dados da Empresa</button>
+            <button class="nav-link" onclick="showView('inventario', this)"><i class="fas fa-clipboard-list"></i> Inventário GRO</button>
+            <button class="nav-link" onclick="showView('plano', this)"><i class="fas fa-tasks"></i> Plano de Ação</button>
+            <button class="nav-link" onclick="generateLaudo(this)"><i class="fas fa-file-pdf"></i> Gerar Laudo Final</button>
         </div>
     </nav>
 
@@ -131,7 +135,7 @@
             
             <div class="card">
                 <table id="table-inv">
-                    <thead><tr><th>Setor</th><th>Perigo</th><th>Matriz</th><th>Nível</th></tr></thead>
+                    <thead><tr><th>Setor</th><th>Perigo</th><th>Matriz</th><th>Nível</th><th class="no-print">Ações</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -160,44 +164,102 @@
     </main>
 
 <script>
+
     let db = { empresa: {}, riscos: [] };
     let chart;
 
-    // 1. NAVEGAÇÃO DE TELAS
-    function showView(viewId) {
+    const STORAGE_KEY = "pgr_digital_db_v1";
+
+    function persistSave() {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch {}
+    }
+    function persistLoad() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') db = parsed;
+            if (!Array.isArray(db.riscos)) db.riscos = [];
+            if (!db.empresa || typeof db.empresa !== 'object') db.empresa = {};
+        } catch {}
+    }
+    function persistClear() {
+        try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    }
+
+    // 1. NAVEGAÇÃO DE TELAS (sem depender de event)
+    function showView(viewId, btnEl) {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
         document.getElementById('view-' + viewId).classList.add('active');
-        event.currentTarget.classList.add('active');
+
+        if (btnEl) {
+            document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+            btnEl.classList.add('active');
+        }
     }
 
     // 2. BUSCA CNPJ AUTOMÁTICA
     async function checkCNPJ(cnpj) {
-        cnpj = cnpj.replace(/\D/g, '');
-        if(cnpj.length !== 14) return;
-        
+        cnpj = (cnpj || '').replace(/\D/g, '');
+        if (cnpj.length !== 14) return;
+
         try {
             const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`);
             const data = await res.json();
-            
-            if(data.razao_social) {
-                document.getElementById('emp-razao').value = data.razao_social;
+
+            if (data && data.razao_social) {
+                document.getElementById('emp-razao').value = data.razao_social || '';
                 document.getElementById('emp-fantasia').value = data.nome_fantasia || 'N/A';
-                document.getElementById('emp-cnae').value = data.cnae_fiscal_descricao;
+                document.getElementById('emp-cnae').value = data.cnae_fiscal_descricao || '';
                 db.empresa = data;
+                persistSave();
             }
-        } catch (e) { alert("Erro ao buscar CNPJ"); }
+        } catch (e) {
+            alert("Erro ao buscar CNPJ");
+        }
     }
 
-    // 3. SALVAR RISCO
+    // Helpers simples
+    function esc(str) {
+        return String(str ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+    function makeId() {
+        try { return crypto.randomUUID(); } catch { return String(Date.now()) + "_" + Math.random().toString(16).slice(2); }
+    }
+    function clearRiskForm() {
+        ['r-setor','r-perigo','r-fonte','r-acao'].forEach(id => (document.getElementById(id).value = ''));
+        document.getElementById('r-prob').value = "1";
+        document.getElementById('r-sev').value = "1";
+    }
+
+    // 3. SALVAR RISCO (com validação + persistência)
     function saveRisk() {
+        const setor = document.getElementById('r-setor').value.trim();
+        const perigo = document.getElementById('r-perigo').value.trim();
+        const fonte = document.getElementById('r-fonte').value.trim();
+        const acao = document.getElementById('r-acao').value.trim();
+
+        const missing = [];
+        if (!setor) missing.push("Setor");
+        if (!perigo) missing.push("Perigo");
+        if (!fonte) missing.push("Fonte/Agente");
+        if (!acao) missing.push("Medida/Plano de Ação");
+
+        if (missing.length) {
+            alert("Preencha: " + missing.join(", "));
+            return;
+        }
+
+        const prob = parseInt(document.getElementById('r-prob').value, 10);
+        const sev = parseInt(document.getElementById('r-sev').value, 10);
+
         const risk = {
-            setor: document.getElementById('r-setor').value,
-            perigo: document.getElementById('r-perigo').value,
-            fonte: document.getElementById('r-fonte').value,
-            prob: parseInt(document.getElementById('r-prob').value),
-            sev: parseInt(document.getElementById('r-sev').value),
-            acao: document.getElementById('r-acao').value,
+            id: makeId(),
+            setor, perigo, fonte,
+            prob, sev,
+            acao,
+            responsavel: '',
+            prazo: '',
             status: 'Pendente'
         };
 
@@ -207,68 +269,210 @@
         risk.badge = score >= 15 ? 'bg-critico' : (score >= 9 ? 'bg-medio' : 'bg-baixo');
 
         db.riscos.push(risk);
+        persistSave();
+        updateUI();
+        clearRiskForm();
+    }
+
+    function deleteRisk(id) {
+        if (!confirm("Deseja excluir este risco?")) return;
+        db.riscos = db.riscos.filter(r => r.id !== id);
+        persistSave();
         updateUI();
     }
 
     // 4. ATUALIZAR INTERFACE E GRÁFICOS
     function updateUI() {
-        const tableInv = document.querySelector('#table-inv tbody');
-        const tablePlano = document.querySelector('#table-plano tbody');
-        tableInv.innerHTML = ''; tablePlano.innerHTML = '';
-        
+        const tableInvBody = document.querySelector('#table-inv tbody');
+        const tablePlanoBody = document.querySelector('#table-plano tbody');
+        tableInvBody.innerHTML = '';
+        tablePlanoBody.innerHTML = '';
+
         let counts = [0, 0, 0];
 
         db.riscos.forEach(r => {
-            if(r.nivel === 'BAIXO') counts[0]++;
-            if(r.nivel === 'MÉDIO') counts[1]++;
-            if(r.nivel === 'CRÍTICO') counts[2]++;
+            if (r.nivel === 'BAIXO') counts[0]++;
+            if (r.nivel === 'MÉDIO') counts[1]++;
+            if (r.nivel === 'CRÍTICO') counts[2]++;
 
-            tableInv.innerHTML += `<tr><td>${r.setor}</td><td>${r.perigo}</td><td>${r.score}</td><td><span class="badge ${r.badge}">${r.nivel}</span></td></tr>`;
-            tablePlano.innerHTML += `<tr><td>${r.acao}</td><td>${r.setor}</td><td><input type="text" placeholder="Nome"></td><td><input type="date"></td><td><select><option>Pendente</option><option>Concluído</option></select></td></tr>`;
+            // Inventário
+            const trInv = document.createElement('tr');
+
+            const tdSetor = document.createElement('td');
+            tdSetor.textContent = r.setor ?? '';
+            const tdPerigo = document.createElement('td');
+            tdPerigo.textContent = r.perigo ?? '';
+            const tdScore = document.createElement('td');
+            tdScore.textContent = String(r.score ?? '');
+            const tdNivel = document.createElement('td');
+            const badge = document.createElement('span');
+            badge.className = `badge ${r.badge || ''}`;
+            badge.textContent = r.nivel ?? '';
+            tdNivel.appendChild(badge);
+
+            trInv.appendChild(tdSetor);
+            trInv.appendChild(tdPerigo);
+            trInv.appendChild(tdScore);
+            trInv.appendChild(tdNivel);
+
+            // Ações (não imprime)
+            const tdAcoes = document.createElement('td');
+            tdAcoes.className = 'no-print';
+            const btnDel = document.createElement('button');
+            btnDel.className = 'btn btn-danger btn-xs';
+            btnDel.type = 'button';
+            btnDel.textContent = 'Excluir';
+            btnDel.onclick = () => deleteRisk(r.id);
+            tdAcoes.appendChild(btnDel);
+            trInv.appendChild(tdAcoes);
+
+            tableInvBody.appendChild(trInv);
+
+            // Plano de ação (persistente)
+            const trPlano = document.createElement('tr');
+
+            const tdMedida = document.createElement('td');
+            tdMedida.textContent = r.acao ?? '';
+            const tdSetor2 = document.createElement('td');
+            tdSetor2.textContent = r.setor ?? '';
+
+            const tdResp = document.createElement('td');
+            const inpResp = document.createElement('input');
+            inpResp.type = 'text';
+            inpResp.placeholder = 'Nome';
+            inpResp.value = r.responsavel || '';
+            inpResp.addEventListener('input', () => {
+                r.responsavel = inpResp.value;
+                persistSave();
+            });
+            tdResp.appendChild(inpResp);
+
+            const tdPrazo = document.createElement('td');
+            const inpPrazo = document.createElement('input');
+            inpPrazo.type = 'date';
+            inpPrazo.value = r.prazo || '';
+            inpPrazo.addEventListener('change', () => {
+                r.prazo = inpPrazo.value;
+                persistSave();
+            });
+            tdPrazo.appendChild(inpPrazo);
+
+            const tdStatus = document.createElement('td');
+            const sel = document.createElement('select');
+            ['Pendente', 'Concluído'].forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt;
+                o.textContent = opt;
+                if ((r.status || 'Pendente') === opt) o.selected = true;
+                sel.appendChild(o);
+            });
+            sel.addEventListener('change', () => {
+                r.status = sel.value;
+                persistSave();
+            });
+            tdStatus.appendChild(sel);
+
+            trPlano.appendChild(tdMedida);
+            trPlano.appendChild(tdSetor2);
+            trPlano.appendChild(tdResp);
+            trPlano.appendChild(tdPrazo);
+            trPlano.appendChild(tdStatus);
+
+            tablePlanoBody.appendChild(trPlano);
         });
 
         document.getElementById('dash-total').innerText = db.riscos.length;
         document.getElementById('dash-critico').innerText = counts[2];
 
-        chart.data.datasets[0].data = counts;
-        chart.update();
+        if (chart) {
+            chart.data.datasets[0].data = counts;
+            chart.update();
+        }
     }
 
-    // 5. GERAR LAUDO ESTRUTURADO
-    function generateLaudo() {
-        showView('laudo-print');
+    // 5. GERAR LAUDO ESTRUTURADO (com plano completo)
+    function generateLaudo(btnEl) {
+        showView('laudo-print', btnEl);
+
         const content = document.getElementById('laudo-content');
+
+        const razao = document.getElementById('emp-razao').value || db.empresa?.razao_social || '';
+        const cnpj = document.getElementById('emp-cnpj').value || '';
+        const cnae = document.getElementById('emp-cnae').value || db.empresa?.cnae_fiscal_descricao || '';
+        const fantasia = document.getElementById('emp-fantasia').value || db.empresa?.nome_fantasia || '';
+
         content.innerHTML = `
-            <h3>1. Identificação da Empresa</h3>
-            <p><b>Razão Social:</b> ${document.getElementById('emp-razao').value}</p>
-            <p><b>CNPJ:</b> ${document.getElementById('emp-cnpj').value}</p>
-            <p><b>Atividade:</b> ${document.getElementById('emp-cnae').value}</p>
-            
+            <h3>1. Identificação da Organização</h3>
+            <p><b>Razão Social:</b> ${esc(razao)}</p>
+            <p><b>Nome Fantasia:</b> ${esc(fantasia)}</p>
+            <p><b>CNPJ:</b> ${esc(cnpj)}</p>
+            <p><b>Atividade:</b> ${esc(cnae)}</p>
+
             <h3>2. Inventário de Riscos Ocupacionais (GRO)</h3>
             <table border="1" style="width:100%; border-collapse:collapse;">
-                <thead><tr><th>Setor</th><th>Perigo</th><th>Risco</th><th>Nível</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>Setor</th><th>Perigo</th><th>Risco</th><th>Nível</th>
+                    </tr>
+                </thead>
                 <tbody>
-                    ${db.riscos.map(r => `<tr><td>${r.setor}</td><td>${r.perigo}</td><td>${r.fonte}</td><td>${r.nivel}</td></tr>`).join('')}
+                    ${db.riscos.map(r => `
+                        <tr>
+                            <td>${esc(r.setor)}</td>
+                            <td>${esc(r.perigo)}</td>
+                            <td>${esc(r.fonte)}</td>
+                            <td>${esc(r.nivel)}</td>
+                        </tr>
+                    `).join('')}
                 </tbody>
             </table>
 
             <h3>3. Plano de Ação</h3>
             <table border="1" style="width:100%; border-collapse:collapse; margin-top:10px;">
-                <thead><tr><th>Medida Proposta</th><th>Setor</th><th>Responsável</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>Medida Proposta</th><th>Setor</th><th>Responsável</th><th>Prazo</th><th>Status</th>
+                    </tr>
+                </thead>
                 <tbody>
-                    ${db.riscos.map(r => `<tr><td>${r.acao}</td><td>${r.setor}</td><td>__________</td></tr>`).join('')}
+                    ${db.riscos.map(r => `
+                        <tr>
+                            <td>${esc(r.acao)}</td>
+                            <td>${esc(r.setor)}</td>
+                            <td>${esc(r.responsavel || '__________')}</td>
+                            <td>${esc(r.prazo || '__________')}</td>
+                            <td>${esc(r.status || 'Pendente')}</td>
+                        </tr>
+                    `).join('')}
                 </tbody>
             </table>
         `;
     }
 
     window.onload = () => {
+        // 1) Inicializa gráfico
         const ctx = document.getElementById('mainChart').getContext('2d');
         chart = new Chart(ctx, {
             type: 'bar',
-            data: { labels: ['Baixo', 'Médio', 'Crítico'], datasets: [{ label: 'Riscos', data: [0,0,0], backgroundColor: ['#10b981', '#f59e0b', '#ef4444'] }] }
+            data: {
+                labels: ['Baixo', 'Médio', 'Crítico'],
+                datasets: [{ label: 'Riscos', data: [0,0,0] }]
+            }
         });
+
+        // 2) Carrega persistência e repopula inputs
+        persistLoad();
+
+        if (db.empresa?.cnpj) {
+            document.getElementById('emp-cnpj').value = (db.empresa.cnpj || '').replace(/\D/g,'');
+            document.getElementById('emp-razao').value = db.empresa.razao_social || '';
+            document.getElementById('emp-fantasia').value = db.empresa.nome_fantasia || '';
+            document.getElementById('emp-cnae').value = db.empresa.cnae_fiscal_descricao || '';
+        }
+
+        updateUI();
     };
+
 </script>
 </body>
 </html>
